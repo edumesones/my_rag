@@ -60,6 +60,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 
 # Instrumentación DSPy/OpenTelemetry
 do_not_instrument = os.getenv("INSTRUMENT_DSPY", "true") == "false"
