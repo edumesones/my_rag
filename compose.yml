@@ -1,0 +1,18 @@
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=dev
+      - COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+      # Set INSTRUMENT_DSPY=false to disable instrumentation
+      - INSTRUMENT_DSPY=true
+      # Set your ollama base url 
+      - OPENAI_API_KEY  =${OPENAI_API_KEY}

@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "dspy-gradio-rag"
+version = "0.1.0"
+description = "RAG example using DSPy, Gradio"
+authors = ["edu"]
+license = "MIT"
+readme = "../README.md"
+packages = [
+  { include = "app" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10, <3.12"
+fastapi = "^0.110.0"
+dspy-ai = "^2.4.0"
+numpy = ">=1.23,<2.0"
+chromadb = "^0.4.24"
+
+uvicorn = {extras = ["standard"], version = "^0.28.0"}
+openai = "^1.0.0"
+gradio = "^4.0"
+arize-phoenix = "^3.12.0"
+openinference-instrumentation-dspy = "^0.1.5"
+opentelemetry-exporter-otlp = "^1.23.0"
+onnxruntime-directml = "^1.22.0"
+onnxruntime = "^1.22.0"
+pypdf2 = "^3.0.1"
+fitz = "^0.0.1.dev2"
+langchain = "^0.3.25"
+tiktoken = "^0.9.0"
+pymupdf = "^1.26.1"
+slowapi = "^0.1.9"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
