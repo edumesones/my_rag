@@ -48,10 +48,10 @@ if _original_get_type:
 import os
 import logging
 import uvicorn
-from fastapi import FastAPI,Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import gradio as gr
-from fastapi import FastAPI, Request
+from pathlib import Path
 
 from app.api.routers.rag import rag_router
 from app.gradio_ui.ui import gradio_iface
@@ -59,21 +59,34 @@ from instrument import instrument
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-limiter = Limiter(key_func=get_remote_address)
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Instrumentación DSPy/OpenTelemetry
 do_not_instrument = os.getenv("INSTRUMENT_DSPY", "true") == "false"
 if not do_not_instrument:
     instrument()
 
-app = FastAPI(title="DSPy x FastAPI")
+# Crear FastAPI app
+app = FastAPI(
+    title="DSPy x FastAPI - Document RAG System", 
+    description="RAG system with document upload capabilities",
+    version="1.0.0"
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-# Configurar CORS en desarrollo env
+
+# Configurar CORS
 environment = os.getenv("ENVIRONMENT", "dev")
 if environment == "dev":
-    logger = logging.getLogger("uvicorn")
     logger.warning("Running in development mode - allowing CORS for all origins")
     app.add_middleware(
         CORSMiddleware,
@@ -82,35 +95,236 @@ if environment == "dev":
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# ===== INICIALIZACIÓN DE DIRECTORIOS PARA DOCUMENTOS =====
+@app.on_event("startup")
+async def startup_event():
+    """Inicializar directorios y verificar dependencias al arrancar"""
+    try:
+        # Crear directorio de datos si no existe
+        data_dir = os.getenv("DATA_DIR", "data")
+        Path(data_dir).mkdir(exist_ok=True)
+        Path(data_dir, "chroma_db").mkdir(exist_ok=True)
+        Path(data_dir, "uploads").mkdir(exist_ok=True)
+        logger.info(f"Data directories initialized at: {data_dir}")
+        
+        # Verificar dependencias críticas
+        try:
+            import PyPDF2
+            logger.info("✅ PyPDF2 available for PDF processing")
+        except ImportError:
+            logger.warning("⚠️ PyPDF2 not installed - PDF support limited")
+        
+        try:
+            import docx
+            logger.info("✅ python-docx available for DOCX processing")
+        except ImportError:
+            logger.warning("⚠️ python-docx not installed - DOCX support disabled")
+        
+        # Verificar OpenAI API Key
+        if os.getenv("OPENAI_API_KEY"):
+            logger.info("✅ OpenAI API key configured")
+        else:
+            logger.warning("⚠️ OPENAI_API_KEY not set - embeddings will fail")
+        
+        # Verificar ChromaDB
+        try:
+            from app.utils.load import get_chroma_client
+            client = get_chroma_client()
+            collections = client.list_collections()
+            logger.info(f"✅ ChromaDB initialized with {len(collections)} collections")
+        except Exception as e:
+            logger.error(f"❌ ChromaDB initialization failed: {e}")
+        
+        logger.info("🚀 Application startup completed successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        raise
+
+# ===== RUTAS PRINCIPALES =====
 @app.get("/")
 async def root(request: Request):
+    """Página principal con información del sistema"""
     logger.info(f"Root access from IP: {request.client.host}")
-    return {"message": "DSPy x FastAPI is running", "status": "healthy"}
+    
+    # Información del sistema
+    try:
+        from app.utils.rag_functions import get_collections_info
+        db_info = get_collections_info()
+        
+        system_info = {
+            "message": "DSPy x FastAPI Document RAG System is running",
+            "status": "healthy",
+            "environment": environment,
+            "features": {
+                "document_upload": "✅ PDF, TXT, DOCX support",
+                "rag_queries": "✅ Zero-shot and compiled RAG",
+                "document_retrieval": "✅ ChromaDB vector search",
+                "pipeline_optimization": "✅ DSPy pipeline training"
+            },
+            "database": {
+                "collections": db_info.get("total_collections", 0),
+                "documents": db_info.get("total_documents", 0)
+            },
+            "endpoints": {
+                "gradio_ui": "/gradio",
+                "api_docs": "/docs",
+                "health_check": "/health",
+                "stats": "/stats"
+            }
+        }
+        
+        return system_info
+        
+    except Exception as e:
+        logger.error(f"Error getting system info: {e}")
+        return {
+            "message": "DSPy x FastAPI Document RAG System", 
+            "status": "running",
+            "error": "Could not load system statistics"
+        }
 
 @app.get("/health")
 async def health_check(request: Request):
+    """Health check detallado"""
     logger.info(f"Health check from IP: {request.client.host}")
-    return {"status": "healthy", "environment": environment}
-
-# ✅ ESTADÍSTICAS - Nueva ruta para ver uso
-@app.get("/stats")
-@limiter.limit("5/minute")  # Solo 5 consultas por minuto
-async def get_stats(request: Request):
-    """Ver estadísticas de uso del sistema."""
+    
+    health_status = {
+        "status": "healthy",
+        "environment": environment,
+        "timestamp": __import__("time").time()
+    }
+    
+    # Verificar componentes
+    checks = {}
+    
+    # Check ChromaDB
     try:
-        from app.utils.cost_monitor import get_usage_stats
-        stats = get_usage_stats()
+        from app.utils.load import get_chroma_client
+        client = get_chroma_client()
+        collections = client.list_collections()
+        checks["chromadb"] = {"status": "healthy", "collections": len(collections)}
+    except Exception as e:
+        checks["chromadb"] = {"status": "error", "error": str(e)}
+    
+    # Check OpenAI API
+    try:
+        if os.getenv("OPENAI_API_KEY"):
+            checks["openai"] = {"status": "configured"}
+        else:
+            checks["openai"] = {"status": "warning", "message": "API key not set"}
+    except Exception as e:
+        checks["openai"] = {"status": "error", "error": str(e)}
+    
+    # Check data directories
+    try:
+        data_dir = Path(os.getenv("DATA_DIR", "data"))
+        checks["filesystem"] = {
+            "status": "healthy" if data_dir.exists() else "warning",
+            "data_dir": str(data_dir),
+            "exists": data_dir.exists()
+        }
+    except Exception as e:
+        checks["filesystem"] = {"status": "error", "error": str(e)}
+    
+    health_status["checks"] = checks
+    
+    # Determinar status general
+    if any(check.get("status") == "error" for check in checks.values()):
+        health_status["status"] = "unhealthy"
+        return health_status
+    elif any(check.get("status") == "warning" for check in checks.values()):
+        health_status["status"] = "degraded"
+    
+    return health_status
+
+# ===== ESTADÍSTICAS DEL SISTEMA =====
+@app.get("/stats")
+@limiter.limit("10/minute")  # Límite de consultas
+async def get_stats(request: Request):
+    """Estadísticas detalladas del sistema"""
+    try:
+        from app.utils.rag_functions import get_collections_info
+        
+        stats = {
+            "system": {
+                "uptime": "running",
+                "environment": environment,
+                "data_dir": os.getenv("DATA_DIR", "data")
+            },
+            "database": get_collections_info(),
+            "capabilities": {
+                "supported_formats": ["PDF", "TXT", "DOCX"],
+                "chunking_strategies": ["recursive", "sentence", "fixed_size"],
+                "embedding_models": ["text-embedding-3-small"],
+                "llm_models": "OpenAI GPT family"
+            }
+        }
+        
         logger.info(f"Stats requested from IP: {request.client.host}")
         return stats
+        
     except ImportError:
-        logger.warning("Cost monitor not available")
-        return {"error": "Stats module not available"}
-# Incluir rutas RAG
-app.include_router(rag_router, prefix="/api/rag", tags=["RAG"])
+        logger.warning("Stats module not fully available")
+        return {"error": "Stats module not available", "basic_status": "running"}
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving statistics")
 
-# Montar UI de Gradio en /gradio
-app = gr.mount_gradio_app(app, gradio_iface, path="/gradio")
+# ===== ENDPOINT PARA INFORMACIÓN DE DOCUMENTOS =====
+@app.get("/documents/info")
+@limiter.limit("20/minute")
+async def get_documents_info(request: Request):
+    """Información sobre documentos cargados"""
+    try:
+        from app.utils.rag_functions import get_collections_info
+        
+        info = get_collections_info()
+        logger.info(f"Document info requested from IP: {request.client.host}")
+        
+        return {
+            "collections": info.get("collections", []),
+            "total_collections": info.get("total_collections", 0),
+            "total_documents": info.get("total_documents", 0),
+            "primary_collection": "user_documents",
+            "supported_formats": ["PDF", "TXT", "DOCX"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting document info: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving document information")
 
-# Ejecutar con uvicorn
+# ===== INCLUIR RUTAS DE LA API =====
+app.include_router(rag_router, prefix="/api", tags=["RAG"])
+
+# ===== MONTAR INTERFAZ GRADIO =====
+try:
+    app = gr.mount_gradio_app(app, gradio_iface, path="/gradio")
+    logger.info("✅ Gradio interface mounted at /gradio")
+except Exception as e:
+    logger.error(f"❌ Failed to mount Gradio interface: {e}")
+    raise
+
+# ===== MANEJO DE ERRORES GLOBAL =====
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Manejo global de errores"""
+    logger.error(f"Global error from {request.client.host}: {exc}")
+    return {
+        "error": "Internal server error",
+        "message": "An unexpected error occurred",
+        "status_code": 500
+    }
+
+# ===== EJECUTAR APLICACIÓN =====
 if __name__ == "__main__":
-    uvicorn.run(app="main:app", host="0.0.0.0", reload=True)
+    # Configuración para desarrollo
+    uvicorn.run(
+        app="main:app", 
+        host="0.0.0.0", 
+        port=8000,
+        reload=True,
+        reload_dirs=["app"],
+        log_level="info"
+    )
