@@ -1,4 +1,3 @@
-
 import gradio as gr
 import pandas as pd
 import os
@@ -103,7 +102,7 @@ with gr.Blocks(title="Document Management & Pipeline Optimization", theme=gr.the
             )
             qa_preview = gr.Dataframe(
                 label="📋 Data Preview",
-                max_rows=5,
+                
                 interactive=False
             )
 
@@ -204,7 +203,7 @@ with gr.Blocks(title="Document Management & Pipeline Optimization", theme=gr.the
             gr.Warning(f"Error reading CSV: {e}")
             return None
 
-    def compile_pipeline(csv_file, model_name_str, temperature, top_p, max_tokens, k):
+    def run_compile_pipeline(csv_file, model_name_str, temperature, top_p, max_tokens, k):
         """Compile DSPy pipeline"""
         if not csv_file:
             return "❌ No CSV file selected. Please upload a training file."
@@ -265,7 +264,7 @@ with gr.Blocks(title="Document Management & Pipeline Optimization", theme=gr.the
     )
     
     compile_button.click(
-        compile_pipeline,
+        run_compile_pipeline,
         inputs=[csv_file, model_name, temperature, top_p, max_tokens, k_retrieve],
         outputs=[compile_status]
     )
